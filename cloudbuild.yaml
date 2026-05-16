@@ -1,0 +1,95 @@
+# Cloud Build pipeline for argo Phase 0 -> Cloud Run.
+#
+# Usage:
+#   gcloud builds submit \
+#     --config cloudbuild.yaml \
+#     --substitutions=_REGION=us-central1,_REPO=argo,_SERVICE=argo
+#
+# Prerequisites (run once per project):
+#   gcloud services enable run.googleapis.com artifactregistry.googleapis.com \
+#                          cloudbuild.googleapis.com secretmanager.googleapis.com
+#   gcloud artifacts repositories create argo \
+#       --repository-format=docker --location=us-central1
+#
+#   # Create the four secrets (values pasted from stdin / a file):
+#   printf 'sk-ant-...'      | gcloud secrets create argo-anthropic-api-key  --data-file=-
+#   printf 'PK...'           | gcloud secrets create argo-alpaca-api-key     --data-file=-
+#   printf '...'             | gcloud secrets create argo-alpaca-secret-key  --data-file=-
+#   printf 'Name email@x.com'| gcloud secrets create argo-sec-user-agent     --data-file=-
+#
+#   # Grant Cloud Build's default SA write to Artifact Registry + Cloud Run admin:
+#   PROJECT_NUMBER=$(gcloud projects describe "$(gcloud config get-value project)" --format='value(projectNumber)')
+#   gcloud projects add-iam-policy-binding "$(gcloud config get-value project)" \
+#       --member="serviceAccount:${PROJECT_NUMBER}@cloudbuild.gserviceaccount.com" \
+#       --role="roles/run.admin"
+#   gcloud projects add-iam-policy-binding "$(gcloud config get-value project)" \
+#       --member="serviceAccount:${PROJECT_NUMBER}@cloudbuild.gserviceaccount.com" \
+#       --role="roles/iam.serviceAccountUser"
+#
+#   # Grant Cloud Run runtime SA access to the secrets (default SA shown):
+#   for s in argo-anthropic-api-key argo-alpaca-api-key argo-alpaca-secret-key argo-sec-user-agent; do
+#     gcloud secrets add-iam-policy-binding "$s" \
+#         --member="serviceAccount:${PROJECT_NUMBER}-compute@developer.gserviceaccount.com" \
+#         --role="roles/secretmanager.secretAccessor"
+#   done
+
+substitutions:
+  _REGION: us-central1
+  _REPO: argo
+  _SERVICE: argo
+  _IMAGE_TAG: latest
+  _ALLOW_UNAUTH: "false"
+  _MAX_NOTIONAL_USD: "500"
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+  machineType: E2_HIGHCPU_8
+
+images:
+  - "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/argo:${SHORT_SHA}"
+  - "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/argo:${_IMAGE_TAG}"
+
+steps:
+  - id: build
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - --tag=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/argo:${SHORT_SHA}
+      - --tag=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/argo:${_IMAGE_TAG}
+      - .
+
+  - id: push-sha
+    name: gcr.io/cloud-builders/docker
+    args: [push, "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/argo:${SHORT_SHA}"]
+    waitFor: [build]
+
+  - id: push-tag
+    name: gcr.io/cloud-builders/docker
+    args: [push, "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/argo:${_IMAGE_TAG}"]
+    waitFor: [build]
+
+  - id: deploy
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: bash
+    waitFor: [push-sha]
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        AUTH_FLAG="--no-allow-unauthenticated"
+        if [ "${_ALLOW_UNAUTH}" = "true" ]; then
+          AUTH_FLAG="--allow-unauthenticated"
+        fi
+        gcloud run deploy ${_SERVICE} \
+          --image="${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/argo:${SHORT_SHA}" \
+          --region="${_REGION}" \
+          --platform=managed \
+          $AUTH_FLAG \
+          --port=8080 \
+          --memory=1Gi \
+          --cpu=1 \
+          --timeout=300 \
+          --min-instances=0 \
+          --max-instances=2 \
+          --set-env-vars=ARGO_MAX_NOTIONAL_USD=${_MAX_NOTIONAL_USD},ARGO_DATA_DIR=/tmp/argo,ALPACA_PAPER=true,ANTHROPIC_MODEL=claude-opus-4-7 \
+          --set-secrets=ANTHROPIC_API_KEY=argo-anthropic-api-key:latest,ALPACA_API_KEY=argo-alpaca-api-key:latest,ALPACA_SECRET_KEY=argo-alpaca-secret-key:latest,SEC_USER_AGENT=argo-sec-user-agent:latest

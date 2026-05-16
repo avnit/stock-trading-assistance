@@ -25,6 +25,10 @@ dev = [
     "pytest-mock>=3.12.0",
     "ruff>=0.5.0",
 ]
+server = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.30.0",
+]
 
 [project.scripts]
 argo = "argo.cli:app"
