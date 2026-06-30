@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from argo.brokers.base import OrderResult, Position
+from argo.brokers.base import OptionLegOrder, OrderResult, Position
 
 
 class AlpacaBroker:
@@ -37,6 +37,52 @@ class AlpacaBroker:
             qty=qty,
             side=order_side,
             time_in_force=TimeInForce.DAY,
+        )
+        order = self.trading.submit_order(req)
+        raw = self._dump(order)
+        return OrderResult(
+            broker=self.name,
+            broker_order_id=str(order.id) if getattr(order, "id", None) else None,
+            status=str(getattr(order, "status", "submitted")),
+            fill_price=float(order.filled_avg_price) if getattr(order, "filled_avg_price", None) else None,
+            fill_qty=float(order.filled_qty) if getattr(order, "filled_qty", None) else None,
+            raw=raw,
+        )
+
+    def place_multi_leg_order(
+        self,
+        legs: list[OptionLegOrder],
+        *,
+        qty: int,
+        limit_price: float | None,
+    ) -> OrderResult:
+        """Submit a multi-leg options order (Alpaca Level 3, order_class='mleg')."""
+        from alpaca.trading.enums import OrderClass, OrderSide, OrderType, TimeInForce
+        from alpaca.trading.requests import LimitOrderRequest, OptionLegRequest
+
+        if not legs:
+            raise ValueError("legs must be non-empty")
+
+        leg_requests = [
+            OptionLegRequest(
+                symbol=leg.symbol,
+                ratio_qty=leg.ratio,
+                side=OrderSide.BUY if leg.action == "buy" else OrderSide.SELL,
+            )
+            for leg in legs
+        ]
+
+        # Multi-leg orders on Alpaca must be limit orders.
+        if limit_price is None:
+            raise ValueError("limit_price is required for multi-leg orders.")
+
+        req = LimitOrderRequest(
+            qty=qty,
+            order_class=OrderClass.MLEG,
+            type=OrderType.LIMIT,
+            limit_price=round(float(limit_price), 2),
+            time_in_force=TimeInForce.DAY,
+            legs=leg_requests,
         )
         order = self.trading.submit_order(req)
         raw = self._dump(order)
