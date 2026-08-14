@@ -211,3 +211,26 @@ broker — no live API calls.
 - Production-grade auth + persistent state → Phase 5
 
 See [`PRD.md`](PRD.md) for the full plan.
+
+<!-- ARCH-DIAGRAM:START -->
+
+## Architecture
+
+> Auto-generated architecture diagram. See [`docs/context-map.md`](docs/context-map.md) for the full context map (core application, containers/cloud, and database connections).
+
+```mermaid
+flowchart TD
+  User([User / Client])
+  UI["Frontend:4002/8080<br/>React"]
+  App["stock-trading-assistance<br/><small>__main__.py</small><br/>FastAPI + Uvicorn / Express / Node"]
+  DB0[("SQLite")]
+  Img["Container image<br/>(Docker)"]
+  Deploy["Google Cloud Run"]
+  User --> UI
+  UI --> App
+  App --> DB0
+  App -.deploy.-> Img
+  Img -.deploy.-> Deploy
+```
+
+<!-- ARCH-DIAGRAM:END -->
