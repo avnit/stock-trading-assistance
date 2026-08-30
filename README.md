@@ -1,13 +1,14 @@
-# argo — Stock Research & Trading Assistant (Phase 0)
+# argo — Stock Research & Trading Assistant (Phase 1)
 
-Phase 0 of the stock research and trading assistant described in [`PRD.md`](PRD.md).
+Phase 1 of the stock research and trading assistant described in [`PRD.md`](PRD.md).
 
 > **Not investment advice.** Personal-use research tool. Paper trading only by default.
 > Read the PRD before changing anything.
 
-## What Phase 0 ships
+## What ships today
 
-The full **research → propose → human-approved-execute** loop, accessible three ways:
+The full **research → propose → human-approved-execute** loop for both **stock** and
+**multi-leg options strategies**, accessible three ways:
 
 1. **CLI** (`argo …`) — for local use.
 2. **HTTP API** (FastAPI) — for headless / scripted use.
@@ -15,10 +16,15 @@ The full **research → propose → human-approved-execute** loop, accessible th
 
 All three drive the same Python core:
 - `edgartools` → 10-K (Item 1, 1A, 7) + companyfacts fundamentals.
-- `yfinance` → price, 50-day SMA, 200-day SMA, 6-month return.
+- `yfinance` → price, 50-day SMA, 200-day SMA, 6-month return, option chains.
+- `py_vollib_vectorized` → Black-Scholes Greeks (delta, gamma, theta, vega) + IV.
+- `optionlab` → PoP, breakevens, max-loss / max-gain (with closed-form fallback).
+- Built-in strategy selector → matches thesis × IV-regime to one of 7 templates
+  (long call/put, bull-call spread, short-put vertical, iron condor, covered call,
+  cash-secured put).
 - Claude Opus 4.7 (with prompt caching) → one-page thesis.
-- `alpaca-py` → paper trading.
-- SQLite → research / tickets / executions audit log.
+- `alpaca-py` → stock + multi-leg options paper trading (Alpaca Level 3).
+- SQLite → research / tickets (with `legs_json`, `analysis_json`) / executions audit log.
 
 ## Quick start (local)
 
@@ -27,11 +33,27 @@ uv venv && source .venv/bin/activate
 uv pip install -e ".[dev,server]"
 cp .env.example .env  # fill in ANTHROPIC_API_KEY, ALPACA_API_KEY/SECRET, SEC_USER_AGENT
 
-# CLI
+# 1. Research a ticker
 argo research NVDA
+
+# 2a. Stock proposal (Phase 0)
 argo propose NVDA --capital 500
+
+# 2b. Options proposal (Phase 1) — selector picks the template
+argo propose-options NVDA                       # uses thesis from latest research
+argo propose-options AAPL --strategy iron_condor --dte 35 --width 5 --qty 1
+argo propose-options TSLA --strategy short_put_vertical --delta 0.25 --width 10
+
+# 3. List templates / chain expiries
+argo strategies
+argo expiries NVDA
+
+# 4. Approve and execute
 argo tickets
 argo execute TKT-001 --confirm
+
+# Halt: cancel all open orders + block pending tickets
+argo halt
 
 # API + UI
 uvicorn argo.server:app --reload --port 8080
@@ -54,10 +76,25 @@ cd frontend && npm install && npm run dev
 | `ARGO_MAX_NOTIONAL_USD` | `500` | Hard cap on a single trade's notional. |
 | `ARGO_DATA_DIR` | `~/.argo` | SQLite + saved research location. |
 
+## Strategy selector cheat-sheet
+
+The selector picks a template from `thesis_direction × IV_rank`:
+
+|                | bullish              | bearish    | neutral                  |
+|----------------|----------------------|------------|--------------------------|
+| **IV rich** (≥60) | short put vertical   | long put   | iron condor              |
+| **IV neutral**    | bull call spread     | long put   | covered call (or condor) |
+| **IV cheap** (≤30)| long call            | long put   | covered call             |
+
+Override with `--strategy <key>`, target delta with `--delta`, spread width with
+`--width`, expiry with `--dte`. Pass `--own-shares` to enable covered-call picks.
+
 ## Guardrails
 
 - Paper trading only by default.
 - $500/trade notional cap, re-checked with a fresh quote at execution time.
+- For options: the cap is applied against the **max loss** computed at proposal time
+  (per-contract × qty), and re-validated against the stored max loss at execute time.
 - Typed-confirmation execute — `APPROVE <TICKER> <TICKET_ID>` exactly.
 - `argo halt` (CLI) or `POST /halt` (API) — cancels all open orders, blocks pending tickets.
 
@@ -174,3 +211,26 @@ broker — no live API calls.
 - Production-grade auth + persistent state → Phase 5
 
 See [`PRD.md`](PRD.md) for the full plan.
+
+<!-- ARCH-DIAGRAM:START -->
+
+## Architecture
+
+> Auto-generated architecture diagram. See [`docs/context-map.md`](docs/context-map.md) for the full context map (core application, containers/cloud, and database connections).
+
+```mermaid
+flowchart TD
+  User([User / Client])
+  UI["Frontend:4002/8080<br/>React"]
+  App["stock-trading-assistance<br/><small>__main__.py</small><br/>FastAPI + Uvicorn / Express / Node"]
+  DB0[("SQLite")]
+  Img["Container image<br/>(Docker)"]
+  Deploy["Google Cloud Run"]
+  User --> UI
+  UI --> App
+  App --> DB0
+  App -.deploy.-> Img
+  Img -.deploy.-> Deploy
+```
+
+<!-- ARCH-DIAGRAM:END -->

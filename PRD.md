@@ -151,7 +151,7 @@ The first phase is the quick win. Each phase is shippable on its own.
 
 **Deliberately deferred from Phase 0:** options spreads, IBKR, MCP servers, vector store, web UI, 13F, options flow, backtesting.
 
-### Phase 1 — Multi-leg options + better research (≈ 2 weeks)
+### Phase 1 — Multi-leg options + better research (≈ 2 weeks)  ✅ shipped
 
 **Goal:** propose and execute real options strategies (verticals, covered calls, cash-secured puts, iron condors) on Alpaca paper.
 
@@ -173,6 +173,30 @@ The first phase is the quick win. Each phase is shippable on its own.
 - `propose AAPL --thesis bullish` returns a vertical with strikes, PoP, max loss, max gain.
 - `execute <id>` places a multi-leg paper order on Alpaca Level 3.
 - All proposals stored with the rationale and the inputs that produced them.
+
+**Status (shipped):**
+- `src/argo/options/` package: `chains.py` (yfinance + py_vollib_vectorized Greeks),
+  `iv_rank.py` (realized-vol proxy until paid IV history is wired), `strategies.py`
+  (7 templates: long call/put, bull call spread, short put vertical, iron condor,
+  covered call, cash-secured put), `selector.py` (deterministic table on
+  thesis × IV regime; LLM picker deferred), `analytics.py` (optionlab wrapper with
+  closed-form fallback for verticals/condors).
+- New CLI commands: `argo propose-options`, `argo strategies`, `argo expiries`.
+- New HTTP endpoints: `POST /propose-options/{ticker}`, `GET /strategies`,
+  `GET /expiries/{ticker}`.
+- Alpaca `place_multi_leg_order` using `OrderClass.MLEG` + `OptionLegRequest`.
+- DB extended with `strategy_template`, `legs_json`, `analysis_json` columns
+  (additive ALTER on upgrade; no migration required for fresh installs).
+- React frontend: new **Options** tab with full proposer (strategy override, DTE,
+  delta, width, IV-rank override, qty, own-shares flag), plus multi-leg display
+  + analysis metrics on `TicketDetailPage`.
+- 35 new tests added; full suite 57/57 green.
+
+**Deferred to a later phase:**
+- LLM-driven strategy selector (rules table is sufficient for now).
+- Tradier chain ingestion (yfinance + computed Greeks works).
+- PNG payoff diagrams (numeric breakevens + PoP shown; can add later).
+- `sqlite-vec` 10-K vector store (not blocking the options DoD; deferred to Phase 3).
 
 ### Phase 2 — IBKR adapter + go-live readiness (≈ 2 weeks)
 

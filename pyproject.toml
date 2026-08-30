@@ -1,7 +1,7 @@
 [project]
 name = "argo"
-version = "0.1.0"
-description = "Stock research and trading assistant — Phase 0 (Alpaca paper, single-leg)"
+version = "0.2.0"
+description = "Stock research and trading assistant — Phase 1 (Alpaca paper, multi-leg options)"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
@@ -17,6 +17,11 @@ dependencies = [
     "pydantic>=2.7.0",
     "pydantic-settings>=2.3.0",
     "python-dotenv>=1.0.0",
+    "numpy>=1.26",
+    "scipy>=1.11",
+    "py-vollib-vectorized>=0.1.1",
+    "optionlab>=1.5.0",
+    "requests>=2.31.0",
 ]
 
 [project.optional-dependencies]

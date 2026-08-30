@@ -14,7 +14,8 @@ from argo.config import get_settings
 from argo.db import DB
 from argo.execute import GuardrailError, build_execution_plan, execute_ticket
 from argo.llm import generate_thesis
-from argo.propose import ProposalError, propose_trade
+from argo.options import TEMPLATES, list_expiries
+from argo.propose import ProposalError, propose_options, propose_trade
 from argo.research import build_snapshot, today_iso
 
 app = FastAPI(title="argo", version=__version__)
@@ -39,6 +40,17 @@ class ProposeBody(BaseModel):
         default=None, description="bullish | bearish | neutral; defaults to latest stored research"
     )
     capital_usd: float = Field(..., gt=0)
+
+
+class ProposeOptionsBody(BaseModel):
+    thesis_direction: str | None = Field(default=None)
+    strategy: str | None = Field(default=None, description=f"One of: {sorted(TEMPLATES.keys())}")
+    target_dte: int = Field(default=35, ge=1, le=365)
+    target_delta: float | None = Field(default=None, ge=0.01, le=0.99)
+    width: float | None = Field(default=None, gt=0)
+    iv_rank: float | None = Field(default=None, ge=0, le=100)
+    own_shares: bool = Field(default=False)
+    qty: int = Field(default=1, ge=1, le=100)
 
 
 class ExecuteBody(BaseModel):
@@ -160,6 +172,97 @@ def propose(ticker: str, body: ProposeBody) -> dict[str, Any]:
         "estimated_notional": proposal.estimated_notional,
         "rationale": proposal.rationale,
         "approve_with": f"POST /tickets/{ticket_id}/execute body: {{\"confirmation\": \"APPROVE {proposal.ticker} {ticket_id}\"}}",
+    }
+
+
+@app.get("/strategies")
+def strategies_endpoint() -> dict[str, Any]:
+    return {
+        "strategies": [
+            {
+                "key": t.key,
+                "description": t.description,
+                "directions": list(t.direction_fit),
+                "iv_fit": list(t.iv_fit),
+                "default_delta": t.default_delta,
+                "default_width": t.default_width,
+            }
+            for t in TEMPLATES.values()
+        ]
+    }
+
+
+@app.get("/expiries/{ticker}")
+def expiries_endpoint(ticker: str) -> dict[str, Any]:
+    return {"expiries": [d.isoformat() for d in list_expiries(ticker)]}
+
+
+@app.post("/propose-options/{ticker}")
+def propose_options_endpoint(ticker: str, body: ProposeOptionsBody) -> dict[str, Any]:
+    s = get_settings()
+    ticker = ticker.upper()
+    db = _db()
+    research_row = db.latest_research(ticker)
+    if body.thesis_direction is None:
+        if not research_row:
+            raise HTTPException(
+                409, f"No stored research for {ticker}; pass thesis_direction or call /research first"
+            )
+        direction = research_row["thesis_direction"] or "neutral"
+        excerpt = research_row["thesis_summary"]
+        research_id = research_row["id"]
+    else:
+        direction = body.thesis_direction.lower()
+        excerpt = f"User-provided thesis direction: {direction}"
+        research_id = research_row["id"] if research_row else None
+
+    try:
+        proposal = propose_options(
+            ticker=ticker,
+            thesis_direction=direction,
+            max_notional_usd=s.max_notional_usd,
+            template_key=body.strategy,
+            iv_rank=body.iv_rank,
+            target_dte=body.target_dte,
+            target_delta=body.target_delta,
+            width=body.width,
+            own_shares=body.own_shares,
+            thesis_summary_excerpt=excerpt,
+            qty=body.qty,
+        )
+    except ProposalError as exc:
+        raise HTTPException(409, str(exc))
+
+    ticket_id = db.next_ticket_id()
+    db.save_ticket(
+        ticket_id=ticket_id,
+        ticker=proposal.ticker,
+        side=proposal.side,
+        asset_type=proposal.asset_type,
+        qty=proposal.qty,
+        estimated_price=proposal.estimated_price,
+        estimated_notional=proposal.estimated_notional,
+        rationale=proposal.rationale,
+        research_id=research_id,
+        order_payload=proposal.order_payload,
+        strategy_template=proposal.strategy_template,
+        legs=proposal.legs,
+        analysis=proposal.analysis,
+    )
+    return {
+        "ticket_id": ticket_id,
+        "ticker": proposal.ticker,
+        "strategy": proposal.strategy_template,
+        "qty": proposal.qty,
+        "estimated_price": proposal.estimated_price,
+        "estimated_notional": proposal.estimated_notional,
+        "legs": proposal.legs,
+        "analysis": proposal.analysis,
+        "rationale": proposal.rationale,
+        "approve_with": (
+            f"POST /tickets/{ticket_id}/execute body: "
+            f"{{\"confirmation\": \"APPROVE {proposal.ticker} {ticket_id}\"}}"
+        ),
     }
 
 

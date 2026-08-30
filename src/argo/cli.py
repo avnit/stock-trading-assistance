@@ -15,11 +15,12 @@ from argo.config import get_settings
 from argo.db import DB
 from argo.execute import GuardrailError, build_execution_plan, execute_ticket
 from argo.llm import generate_thesis
-from argo.propose import ProposalError, propose_trade
+from argo.options import TEMPLATES, list_expiries
+from argo.propose import ProposalError, propose_options, propose_trade
 from argo.research import build_snapshot, today_iso
 
 app = typer.Typer(
-    help="argo — stock research and trading assistant (Phase 0, Alpaca paper).",
+    help="argo — stock research and trading assistant (Phase 1, Alpaca paper).",
     no_args_is_help=True,
 )
 console = Console()
@@ -165,6 +166,126 @@ def propose(
     console.print(
         f"Approve with: [bold cyan]argo execute {ticket_id} --confirm[/bold cyan]"
     )
+
+
+@app.command("propose-options")
+def propose_options_cmd(
+    ticker: str = typer.Argument(..., help="US-listed ticker"),
+    thesis: str = typer.Option(None, "--thesis", help="bullish | bearish | neutral (defaults to latest research)"),
+    strategy: str = typer.Option(None, "--strategy", help=f"One of: {', '.join(sorted(TEMPLATES.keys()))}"),
+    dte: int = typer.Option(35, "--dte", help="Target days-to-expiry"),
+    delta: float = typer.Option(None, "--delta", help="Target abs(delta) for primary leg"),
+    width: float = typer.Option(None, "--width", help="Spread width in $ for verticals/condors"),
+    iv_rank: float = typer.Option(None, "--iv-rank", help="Override IV rank 0..100"),
+    own_shares: bool = typer.Option(False, "--own-shares", help="100+ shares of underlying held"),
+    qty: int = typer.Option(1, "--qty", help="Number of contract sets to trade"),
+):
+    """Generate a multi-leg options ticket."""
+    s = get_settings()
+    ticker = ticker.upper()
+    db = _db()
+    research_row = db.latest_research(ticker)
+    if thesis is None:
+        if not research_row:
+            console.print(f"[red]No stored research for {ticker}. Run `argo research {ticker}` first or pass --thesis.[/red]")
+            raise typer.Exit(2)
+        direction = research_row["thesis_direction"] or "neutral"
+        excerpt = research_row["thesis_summary"]
+        research_id = research_row["id"]
+    else:
+        direction = thesis.lower()
+        excerpt = f"User-provided thesis direction: {direction}"
+        research_id = research_row["id"] if research_row else None
+
+    console.print(f"[bold]Generating options proposal for {ticker}...[/bold]")
+    try:
+        proposal = propose_options(
+            ticker=ticker,
+            thesis_direction=direction,
+            max_notional_usd=s.max_notional_usd,
+            template_key=strategy,
+            iv_rank=iv_rank,
+            target_dte=dte,
+            target_delta=delta,
+            width=width,
+            own_shares=own_shares,
+            thesis_summary_excerpt=excerpt,
+            qty=qty,
+        )
+    except ProposalError as exc:
+        console.print(f"[yellow]No proposal: {exc}[/yellow]")
+        raise typer.Exit(1)
+
+    ticket_id = db.next_ticket_id()
+    db.save_ticket(
+        ticket_id=ticket_id,
+        ticker=proposal.ticker,
+        side=proposal.side,
+        asset_type=proposal.asset_type,
+        qty=proposal.qty,
+        estimated_price=proposal.estimated_price,
+        estimated_notional=proposal.estimated_notional,
+        rationale=proposal.rationale,
+        research_id=research_id,
+        order_payload=proposal.order_payload,
+        strategy_template=proposal.strategy_template,
+        legs=proposal.legs,
+        analysis=proposal.analysis,
+    )
+
+    table = Table(title=f"Ticket {ticket_id} ({proposal.strategy_template})")
+    table.add_column("Field")
+    table.add_column("Value")
+    table.add_row("ticker", proposal.ticker)
+    table.add_row("strategy", proposal.strategy_template or "")
+    table.add_row("qty", str(proposal.qty))
+    table.add_row("net price", f"${proposal.estimated_price}")
+    table.add_row("net notional", f"${proposal.estimated_notional}")
+    if proposal.analysis:
+        a = proposal.analysis
+        table.add_row("max loss", str(a.get("max_loss")))
+        table.add_row("max gain", str(a.get("max_gain")))
+        table.add_row("PoP %", str(a.get("pop_pct")))
+        table.add_row("breakevens", ", ".join(str(b) for b in (a.get("breakevens") or [])))
+    console.print(table)
+
+    leg_table = Table(title="legs")
+    for col in ["action", "type", "strike", "expiry", "delta", "iv", "mid", "symbol"]:
+        leg_table.add_column(col)
+    for leg in proposal.legs:
+        leg_table.add_row(
+            leg["action"], leg["option_type"], str(leg["strike"]), leg["expiry"],
+            f"{leg.get('delta') or 0:.2f}", f"{leg.get('iv') or 0:.3f}",
+            f"{leg.get('mid')}", leg["symbol"],
+        )
+    console.print(leg_table)
+    console.print(Panel(proposal.rationale, title="rationale"))
+    console.print(f"Approve with: [bold cyan]argo execute {ticket_id} --confirm[/bold cyan]")
+
+
+@app.command("strategies")
+def strategies_cmd():
+    """List built-in options strategy templates."""
+    table = Table(title="Strategy templates")
+    for col in ["key", "directions", "iv fit", "description"]:
+        table.add_column(col)
+    for tpl in TEMPLATES.values():
+        table.add_row(
+            tpl.key, ", ".join(tpl.direction_fit), ", ".join(tpl.iv_fit), tpl.description
+        )
+    console.print(table)
+
+
+@app.command("expiries")
+def expiries_cmd(ticker: str = typer.Argument(...)):
+    """List available option expiries (yfinance)."""
+    expiries = list_expiries(ticker)
+    if not expiries:
+        console.print(f"(no expiries for {ticker.upper()})")
+        return
+    for d in expiries[:20]:
+        dte = (d - date.today()).days
+        console.print(f"  {d.isoformat()}  (DTE={dte})")
 
 
 @app.command("tickets")

@@ -15,6 +15,9 @@ export function Nav() {
         <NavLink to="/" end className={linkClass}>
           Research
         </NavLink>
+        <NavLink to="/options" className={linkClass}>
+          Options
+        </NavLink>
         <NavLink to="/tickets" className={linkClass}>
           Tickets
         </NavLink>
@@ -22,7 +25,7 @@ export function Nav() {
           Positions
         </NavLink>
         <div className="ml-auto text-xs text-slate-500">
-          Phase 0 — Alpaca paper
+          Phase 1 — Alpaca paper
         </div>
       </div>
     </nav>

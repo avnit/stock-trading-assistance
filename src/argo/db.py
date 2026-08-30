@@ -30,6 +30,9 @@ CREATE TABLE IF NOT EXISTS tickets (
     rationale TEXT NOT NULL,
     research_id INTEGER,
     order_payload_json TEXT NOT NULL,
+    strategy_template TEXT,
+    legs_json TEXT,
+    analysis_json TEXT,
     FOREIGN KEY (research_id) REFERENCES research(id)
 );
 CREATE INDEX IF NOT EXISTS idx_tickets_status ON tickets(status);
@@ -62,6 +65,10 @@ class DB:
     def _init(self) -> None:
         with self.conn() as c:
             c.executescript(SCHEMA)
+            existing_cols = {r["name"] for r in c.execute("PRAGMA table_info(tickets)").fetchall()}
+            for col in ("strategy_template", "legs_json", "analysis_json"):
+                if col not in existing_cols:
+                    c.execute(f"ALTER TABLE tickets ADD COLUMN {col} TEXT")
 
     @contextmanager
     def conn(self) -> Iterator[sqlite3.Connection]:
@@ -121,12 +128,16 @@ class DB:
         rationale: str,
         research_id: int | None,
         order_payload: dict[str, Any],
+        strategy_template: str | None = None,
+        legs: list[dict[str, Any]] | None = None,
+        analysis: dict[str, Any] | None = None,
     ) -> None:
         with self.conn() as c:
             c.execute(
                 "INSERT INTO tickets (id, ticker, created_at, status, side, asset_type, qty, "
-                "estimated_price, estimated_notional, rationale, research_id, order_payload_json) "
-                "VALUES (?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?)",
+                "estimated_price, estimated_notional, rationale, research_id, order_payload_json, "
+                "strategy_template, legs_json, analysis_json) "
+                "VALUES (?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     ticket_id,
                     ticker.upper(),
@@ -139,6 +150,9 @@ class DB:
                     rationale,
                     research_id,
                     json.dumps(order_payload),
+                    strategy_template,
+                    json.dumps(legs) if legs is not None else None,
+                    json.dumps(analysis, default=str) if analysis is not None else None,
                 ),
             )
 

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
 import { api, ResearchResult } from "../api";
 
@@ -100,32 +100,49 @@ export function HomePage() {
             <ReactMarkdown>{result.thesis_markdown}</ReactMarkdown>
           </div>
 
-          <div className="border-t border-slate-200 pt-4">
-            <h2 className="font-semibold mb-2">Propose a trade</h2>
-            <p className="text-sm text-slate-600 mb-3">
-              Phase 0 proposes long stock only, on bullish theses. Direction here is{" "}
-              <span className="font-medium">{result.direction}</span>.
+          <div className="border-t border-slate-200 pt-4 space-y-3">
+            <h2 className="font-semibold">Propose a trade</h2>
+            <p className="text-sm text-slate-600">
+              Direction here is <span className="font-medium">{result.direction}</span>.
             </p>
-            <div className="flex gap-2 items-end">
-              <div>
-                <label className="block text-xs font-medium text-slate-600 mb-1">
-                  Capital (USD)
-                </label>
-                <input
-                  type="number"
-                  min={1}
-                  value={capital}
-                  onChange={(e) => setCapital(Number(e.target.value))}
-                  className="border border-slate-300 rounded-md px-3 py-2 w-32"
-                />
+            <div className="grid md:grid-cols-2 gap-3">
+              <div className="border border-slate-200 rounded p-3">
+                <div className="text-xs uppercase text-slate-500 mb-2">Long stock (Phase 0)</div>
+                <div className="flex gap-2 items-end">
+                  <div>
+                    <label className="block text-xs font-medium text-slate-600 mb-1">
+                      Capital (USD)
+                    </label>
+                    <input
+                      type="number"
+                      min={1}
+                      value={capital}
+                      onChange={(e) => setCapital(Number(e.target.value))}
+                      className="border border-slate-300 rounded-md px-3 py-2 w-32"
+                    />
+                  </div>
+                  <button
+                    onClick={proposeTrade}
+                    disabled={proposing}
+                    className="bg-emerald-700 text-white px-4 py-2 rounded-md font-medium disabled:opacity-50"
+                  >
+                    {proposing ? "Generating..." : "Propose stock"}
+                  </button>
+                </div>
               </div>
-              <button
-                onClick={proposeTrade}
-                disabled={proposing}
-                className="bg-emerald-700 text-white px-4 py-2 rounded-md font-medium disabled:opacity-50"
-              >
-                {proposing ? "Generating..." : "Propose"}
-              </button>
+              <div className="border border-slate-200 rounded p-3">
+                <div className="text-xs uppercase text-slate-500 mb-2">Options strategy (Phase 1)</div>
+                <p className="text-xs text-slate-600 mb-2">
+                  Verticals, iron condors, covered calls, cash-secured puts. Selector matches
+                  thesis × IV regime; you can override.
+                </p>
+                <Link
+                  to={`/options?ticker=${result.ticker}`}
+                  className="inline-block bg-slate-900 text-white px-4 py-2 rounded-md font-medium"
+                >
+                  Build options trade →
+                </Link>
+              </div>
             </div>
           </div>
         </section>
